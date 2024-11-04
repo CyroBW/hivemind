@@ -1,17 +1,19 @@
 use super::defs::SearchRefs;
 use super::{Move, Search};
 use crate::types::parameters::*;
+use shakmaty::variant::Crazyhouse;
 use shakmaty::{
     attacks::{bishop_attacks, rook_attacks},
-    Bitboard, Board, Chess, Color, MoveList, Position, Role,
+    Bitboard, Board, Color, MoveList, Position, Role,
 };
 
 const BAD_CAPTURE: i32 = -200_000_000;
 const GOOD_CAPTURE: i32 = 200_000_000;
 const KILLER_BONUS: i32 = 100_000_000;
 const HASH_MOVE: i32 = 300_000_000;
+const DROP_MOVE: i32 = 100_000;
 
-pub const SEE_VALUE: [i32; 7] = [0, 100, 400, 400, 650, 1200, 0];
+pub const SEE_VALUES: [i32; 7] = [0, 100, 400, 400, 650, 1200, 0];
 
 pub fn least_valuable_attacker(board: &Board, attackers: Bitboard) -> Option<Role> {
     Role::ALL
@@ -19,18 +21,33 @@ pub fn least_valuable_attacker(board: &Board, attackers: Bitboard) -> Option<Rol
         .find(|&attacker| (attackers & board.by_role(attacker)).any())
 }
 
-pub fn see(pos: &Chess, mv: &Move, threshold: i32) -> Option<bool> {
-    if mv.is_promotion() || mv.is_castle() || mv.is_en_passant() {
+pub fn move_value(mv: &Move) -> i32 {
+    if mv.is_en_passant() {
+        return SEE_VALUES[Role::Pawn as usize];
+    }
+
+    if let Some(capture) = mv.capture() {
+        SEE_VALUES[capture as usize]
+    } else {
+        0
+    }
+}
+
+pub fn see(pos: &Crazyhouse, mv: &Move, threshold: i32) -> Option<bool> {
+    if matches!(mv, Move::Put { .. }) {
+        return Some(true);
+    }
+    if mv.is_promotion() || mv.is_castle() {
         return Some(true);
     }
 
     let board = pos.board();
-    let mut balance = SEE_VALUE[mv.capture()? as usize] - threshold;
+    let mut balance = move_value(mv) - threshold;
     if balance < 0 {
         return Some(false);
     }
 
-    balance -= SEE_VALUE[mv.role() as usize];
+    balance -= SEE_VALUES[mv.role() as usize];
     if balance >= 0 {
         return Some(true);
     }
@@ -61,7 +78,7 @@ pub fn see(pos: &Chess, mv: &Move, threshold: i32) -> Option<bool> {
         occupied ^= (board.by_role(attacker) & our_attackers).isolate_first();
         stm = stm.other();
 
-        balance = -balance - 1 - SEE_VALUE[attacker as usize];
+        balance = -balance - 1 - SEE_VALUES[attacker as usize];
         if balance >= 0 {
             break;
         }
@@ -100,13 +117,13 @@ impl Search {
                     Some(role) => role as usize,
                     None => 0,
                 };
-                let see_value = see(&refs.board.chess(), m, 0).expect("Error calculating SEE");
+                let see_value = see(&refs.board.state(), m, 0).expect("Error calculating SEE");
                 let history = refs
                     .search_info
                     .history
                     .get_capture(refs.board.turn(), m.clone())
                     .expect("Expected move to be a capture");
-                let mvv = 32 * SEE_VALUE[captured];
+                let mvv = 32 * SEE_VALUES[captured];
                 if !see_value {
                     return BAD_CAPTURE + history + mvv;
                 }
@@ -118,6 +135,11 @@ impl Search {
                     return KILLER_BONUS;
                 }
             }
+
+            if matches!(m, Move::Put { .. }) {
+                return DROP_MOVE;
+            }
+
             ordering_main()
                 * refs
                     .search_info

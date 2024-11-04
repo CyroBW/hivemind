@@ -21,12 +21,17 @@ impl Search {
             alpha = eval;
         }
 
+        let in_check = refs.board.in_check();
         let mut best_score = eval;
 
         let mut captures = refs.board.capture_moves();
         Search::sort_moves(&mut captures, &None, &None, refs);
 
         for mv in &captures {
+            if !in_check && !see(&refs.board.state(), mv, 0).expect("Error evaluating SEE") {
+                continue;
+            }
+
             refs.board.make_move::<false>(mv);
             let score = -Search::qsearch(refs, -beta, -alpha);
             refs.board.undo_move();

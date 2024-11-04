@@ -4,15 +4,26 @@ use shakmaty::{
     fen::{Fen, ParseFenError},
     uci::UciMove,
     zobrist::{Zobrist64, ZobristHash},
-    CastlingMode, Chess, Color, EnPassantMode, Move, MoveList, Position, Role, Square,
+    CastlingMode, Color, EnPassantMode, Move, MoveList, Position, Role, Square,
 };
+
+use shakmaty::variant::Crazyhouse;
+pub const PIECE_VALUES: [i32; 7] = [
+    0,   // 0
+    180, // Pawn
+    478, // Knight
+    478, // Bishop
+    642, // Rook
+    900, // Queen
+    0,   // King
+];
 
 #[derive(Clone, Default)]
 pub struct Board {
-    pos: Chess,
+    pos: Crazyhouse,
     nnue: Network,
-    state_stack: Vec<Chess>,
-    move_stack: Vec<Move>,
+    state_stack: Vec<Crazyhouse>,
+    move_stack: Vec<Option<Move>>,
     history: Vec<u64>,
 }
 
@@ -20,7 +31,7 @@ impl Board {
     pub fn new(fen: &str) -> Result<Self, ParseFenError> {
         let fen_string = String::from(fen);
         let fen: Fen = fen_string.parse()?;
-        let pos: Chess = fen.into_position(CastlingMode::Standard).unwrap();
+        let pos: Crazyhouse = fen.into_position(CastlingMode::Standard).unwrap();
         let mut nnue = Network::default();
         for color in [Color::White, Color::Black] {
             for piece in Role::ALL {
@@ -77,7 +88,7 @@ impl Board {
         self.pos.capture_moves()
     }
 
-    pub fn chess(&self) -> Chess {
+    pub fn state(&self) -> Crazyhouse {
         self.pos.clone()
     }
 
@@ -148,13 +159,15 @@ impl Board {
                     _ => (),
                 }
             }
-            Move::Put { role, to } => {}
+            Move::Put { role, to } => {
+                self.add_piece(stm, *role, *to);
+            }
         }
 
         self.pos.play_unchecked(mv);
         self.nnue.commit();
 
-        self.move_stack.push(mv.clone());
+        self.move_stack.push(Some(mv.clone()));
         self.history.push(self.get_hash());
     }
     pub fn undo_move(&mut self) {
@@ -164,8 +177,32 @@ impl Board {
         self.history.pop();
     }
 
+    pub fn make_null_move(&mut self) {
+        self.state_stack.push(self.pos.clone());
+        if let Ok(pos) = self.pos.clone().swap_turn() {
+            self.pos = pos;
+        }
+        self.move_stack.push(None);
+    }
+
+    pub fn undo_null_move(&mut self) {
+        self.pos = self.state_stack.pop().unwrap();
+        let _mv = self.move_stack.pop();
+    }
+
+    pub fn is_last_move_null(&self) -> bool {
+        self.move_stack.last().is_none()
+    }
+
     pub fn evaluate(&self) -> i32 {
-        let eval = self.nnue.evaluate(self.pos.turn());
+        let stm = self.pos.turn();
+        let mut eval = self.nnue.evaluate(stm);
+        if let Some(pockets) = self.pos.pockets() {
+            for role in Role::ALL {
+                eval += *pockets.get(stm).get(role) as i32 * PIECE_VALUES[role as usize];
+                eval -= *pockets.get(stm.other()).get(role) as i32 * PIECE_VALUES[role as usize];
+            }
+        }
         eval.clamp(-Score::MATE_BOUND + 1, Score::MATE_BOUND - 1)
     }
 
@@ -200,7 +237,7 @@ mod tests {
     use crate::board::Board;
     #[test]
     fn test_nnue() {
-        let mut board = Board::starting_position();
+        let board = Board::starting_position();
         assert_eq!(board.evaluate(), 48);
     }
 }

@@ -15,7 +15,6 @@ use crossbeam_channel::unbounded;
 use crossbeam_channel::Sender;
 
 use defs::{SearchInfo, SearchParams, SearchRefs};
-use shakmaty::zobrist::Zobrist64;
 use shakmaty::Move;
 
 pub struct Search {

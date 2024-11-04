@@ -1,5 +1,7 @@
 mod about;
 
+use shakmaty::variant::Crazyhouse;
+
 use crate::board::Board;
 use crate::transposition::TranspositionTable;
 use crate::{
@@ -10,8 +12,6 @@ use crate::{
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-
-use shakmaty::Chess;
 
 pub struct Engine {
     board: Arc<Mutex<Board>>,
@@ -50,6 +50,7 @@ impl Engine {
                 self.search.send("quit".to_string());
             }
             if cmd == "uci" {
+                self.print_about();
                 println!("uciok");
             }
             if cmd == "isready" {
@@ -114,7 +115,7 @@ impl Engine {
                 if let Some(depth) = cmd.split_whitespace().nth(1) {
                     if let Ok(depth) = depth.parse::<i32>() {
                         let now = Instant::now();
-                        let nodes = perft(&Chess::default(), depth);
+                        let nodes = perft(&Crazyhouse::default(), depth);
 
                         let elapsed_time = now.elapsed();
 
@@ -131,7 +132,7 @@ impl Engine {
             if cmd.starts_with("bench") {
                 if let Some(depth) = cmd.split_whitespace().nth(1) {
                     if let Ok(depth) = depth.parse::<i32>() {
-                        let pos = Chess::new();
+                        let pos = Crazyhouse::new();
                         let mut nodes = 0;
                         let now = Instant::now();
 

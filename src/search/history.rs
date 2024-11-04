@@ -1,4 +1,5 @@
 use crate::types::parameters::*;
+use shakmaty::variant::Crazyhouse;
 use shakmaty::{Chess, Color, Move, MoveList, Position, Role, Square};
 
 const MAX_HISTORY: i32 = 16384;
@@ -26,7 +27,7 @@ impl History {
 
     pub fn update_capture(
         &mut self,
-        pos: Chess,
+        pos: Crazyhouse,
         mv: Move,
         fails: MoveList,
         depth: i32,

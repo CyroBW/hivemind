@@ -1,3 +1,4 @@
+use super::sorting::see;
 use crate::transposition::Bound;
 use crate::types::{parameters::*, Score, MAX_PLY};
 
@@ -23,7 +24,6 @@ impl Search {
 
         let mut best_score: i32 = -Score::INFINITY;
         let mut best_move: Option<Move> = None;
-        let mut fail_low = true;
 
         let mut captures = MoveList::default();
         let mut quiets = MoveList::default();
@@ -45,22 +45,93 @@ impl Search {
         if ply >= MAX_PLY - 1 {
             return refs.board.evaluate();
         }
-
         if depth <= 0 && !in_check {
             return Search::qsearch(refs, alpha, beta);
         }
         depth = depth.max(0);
 
+        let mut tt_move: Option<Move> = None;
+        let hit = refs.tt.read(refs.board.get_hash(), ply);
+        if let Some(hit) = hit {
+            if !pv_node && hit.valid_cutoff(alpha, beta, depth) {
+                return hit.score;
+            }
+            tt_move = hit.m;
+        }
+
+        // Internal Iterative Reductions
+        if !is_root && tt_move.is_none() && depth >= iir_depth() {
+            depth -= 1;
+        }
+
+        if in_check {
+            depth += 1;
+        }
+
         refs.search_info.nodes += 1;
         refs.search_info.sel_depth = refs.search_info.sel_depth.max(ply);
         refs.search_info.pv_length[ply] = ply;
 
+        let eval = refs.board.evaluate();
+        if !in_check && !pv_node && !is_root {
+            // Reverse Futility Pruning
+            if depth < rfp_depth() && eval - rfp_margin() * depth > beta {
+                return eval;
+            }
+            // Razoring
+            if depth <= razoring_depth()
+                && eval + razoring_margin() * depth + razoring_fixed_margin() <= alpha
+            {
+                let score = Search::qsearch(refs, alpha, beta);
+                if score <= alpha {
+                    return score;
+                }
+            }
+            // Null move pruning
+            if !refs.board.is_last_move_null() && depth >= 4 && eval > beta {
+                let r = 3 + depth / 3 + ((eval - beta) / 200).min(4);
+
+                refs.board.make_null_move();
+                let score = -Search::alpha_beta(refs, depth - r, -beta, -beta + 1);
+                refs.board.undo_null_move();
+
+                if score >= beta {
+                    return beta;
+                }
+            }
+        }
+
         let mut moves = refs.board.legal_moves();
-        Search::sort_moves(&mut moves, &refs.search_info.pv[ply][ply], &None, refs);
+        Search::sort_moves(&mut moves, &refs.search_info.pv[ply][ply], &tt_move, refs);
 
         for (moves_searched, mv) in (&moves).into_iter().enumerate() {
+            if !is_root && moves_searched > 0 && alpha > -Score::MATE_BOUND {
+                // Futility Pruning
+                if !pv_node
+                    && !in_check
+                    && !mv.is_capture()
+                    && depth <= fp_depth()
+                    && eval + fp_margin() * depth + fp_fixed_margin() < alpha
+                {
+                    break;
+                }
+
+                // Static Exchange Evaluation Pruning. Skip moves that are losing material.
+                if depth < see_depth()
+                    && !see(
+                        &refs.board.state(),
+                        mv,
+                        -[see_quiet_margin(), see_noisy_margin()][mv.is_capture() as usize] * depth,
+                    )
+                    .expect("Error evaluationg SEE")
+                {
+                    continue;
+                }
+            }
+
             refs.board.make_move::<false>(mv);
             refs.search_info.ply += 1;
+            refs.tt.prefetch(refs.board.get_hash());
 
             let mut score;
             if moves_searched == 0 {
@@ -137,6 +208,14 @@ impl Search {
             );
         }
 
+        refs.tt.write(
+            refs.board.get_hash(),
+            depth,
+            best_score,
+            bound,
+            best_move,
+            ply,
+        );
         best_score
     }
 
@@ -150,7 +229,7 @@ impl Search {
         if best_move.is_capture() {
             refs.search_info
                 .history
-                .update_capture(refs.board.chess(), best_move, captures, depth);
+                .update_capture(refs.board.state(), best_move, captures, depth);
         } else {
             refs.search_info.killers[refs.search_info.ply as usize] = Some(best_move.clone());
             refs.search_info
