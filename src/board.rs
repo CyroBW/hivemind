@@ -203,6 +203,7 @@ impl Board {
                 eval -= *pockets.get(stm.other()).get(role) as i32 * PIECE_VALUES[role as usize];
             }
         }
+        eval /= 2;
         eval.clamp(-Score::MATE_BOUND + 1, Score::MATE_BOUND - 1)
     }
 
